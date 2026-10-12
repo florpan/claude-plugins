@@ -1,0 +1,16 @@
+{
+  "name": "berge-claude-plugins",
+  "owner": { "name": "Christer Åkerlund" },
+  "metadata": {
+    "description": "Christer's Claude Code mods and plugins. Some depend on his own homelab; take the code and adapt it."
+  },
+  "plugins": [
+    {
+      "name": "cache-warmer",
+      "source": "./plugins/cache-warmer",
+      "description": "Keeps the prompt cache warm while the session is idle, with a tiny forked ping that adds nothing to the transcript",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Claude Code writes each mod's type declarations when it loads the mod,
+# and every release rewrites them. Never commit them.
+plugins/*/.claude-plugin/types/
+
+# Secrets and local config never go in this repo.
+.env
+.env.*
+*.local.json
+settings.local.json
+
+node_modules/

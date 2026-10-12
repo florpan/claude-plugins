@@ -1,0 +1,21 @@
+{
+  "name": "cache-warmer",
+  "version": "0.1.0",
+  "description": "Keeps the prompt cache warm while the session is idle, with a tiny forked ping that adds nothing to the transcript",
+  "author": { "name": "Christer Åkerlund" },
+  "license": "MIT",
+  "userConfig": {
+    "intervalMinutes": {
+      "type": "number",
+      "title": "Ping after N idle minutes",
+      "description": "Minutes since the last request before a ping. Keep it under the cache TTL (60 for a 1-hour cache, 4 for a 5-minute one)",
+      "default": 50
+    },
+    "maxPings": {
+      "type": "number",
+      "title": "Max pings in a row",
+      "description": "Pings without any activity from you before it gives up",
+      "default": 3
+    }
+  }
+}
