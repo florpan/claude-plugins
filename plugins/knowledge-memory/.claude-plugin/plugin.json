@@ -1,0 +1,33 @@
+{
+  "name": "knowledge-memory",
+  "version": "0.1.0",
+  "description": "Saves what each turn teaches straight into a Graphiti knowledge graph: a Haiku check after every turn, a cached fork writes the episode",
+  "author": { "name": "Christer Åkerlund" },
+  "license": "MIT",
+  "userConfig": {
+    "server": {
+      "type": "string",
+      "title": "Knowledge MCP server",
+      "description": "The Graphiti MCP server's name as /mcp lists it",
+      "default": "knowledge"
+    },
+    "learningGroup": {
+      "type": "string",
+      "title": "Group for learnings",
+      "description": "group_id for cross-project learnings; project facts go to project_<name>",
+      "default": "learning"
+    },
+    "judgeModel": {
+      "type": "string",
+      "title": "Judge model",
+      "description": "The small model that decides after each turn whether anything is worth saving",
+      "default": "haiku"
+    },
+    "mirrorAutoMemory": {
+      "type": "boolean",
+      "title": "Mirror auto-memory files",
+      "description": "Send each file written under ~/.claude/projects/*/memory/ to the graph as it lands",
+      "default": true
+    }
+  }
+}

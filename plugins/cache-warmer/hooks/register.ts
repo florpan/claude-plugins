@@ -97,11 +97,11 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'cache-warmer' }, async ($, e) => {
-    if ((e.args ?? '').trim() === 'ping') return { text: 'cache-warmer: ' + (await ping($)) }
+    if ((e.args ?? '').trim() === 'ping') return { text: await ping($) }
     const idle = lastAt ? Math.round(((await $.clock.now()) - lastAt) / MIN) : null
     return {
       text: [
-        `cache-warmer: pings every ${interval / MIN} min idle, at most ${maxPings} in a row.`,
+        `Pings every ${interval / MIN} min idle, at most ${maxPings} in a row.`,
         idle === null ? 'No request yet in this conversation.' : `Idle ${idle} min, ${pings}/${maxPings} pings used.`,
         `Last: ${lastResult}`,
       ].join('\n'),

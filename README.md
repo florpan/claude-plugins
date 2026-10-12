@@ -31,6 +31,7 @@ claude plugin install <mod>@berge-claude-plugins
 | Mod | What it does |
 | --- | --- |
 | [cache-warmer](plugins/cache-warmer) | Keeps the prompt cache warm while the session is idle |
+| [knowledge-memory](plugins/knowledge-memory) | Saves what each turn teaches into a Graphiti knowledge graph (needs a Graphiti MCP server) |
 
 ## Rules for this repo
 

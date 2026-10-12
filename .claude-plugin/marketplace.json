@@ -11,6 +11,13 @@
       "description": "Keeps the prompt cache warm while the session is idle, with a tiny forked ping that adds nothing to the transcript",
       "version": "0.1.0",
       "license": "MIT"
+    },
+    {
+      "name": "knowledge-memory",
+      "source": "./plugins/knowledge-memory",
+      "description": "Saves what each turn teaches straight into a Graphiti knowledge graph: a Haiku check after every turn, a cached fork writes the episode",
+      "version": "0.1.0",
+      "license": "MIT"
     }
   ]
 }

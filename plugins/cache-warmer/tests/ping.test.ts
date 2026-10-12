@@ -40,6 +40,6 @@ test('the status command answers without pinging', async ($, on) => {
   let forked = false
   on('model.fork', () => { forked = true; return { value: { isAnswered: false, reason: 'nothing-to-fork' } } })
   const r = await $.command.run({ command: 'cache-warmer', args: '' })
-  expect(r.text).toContain('pings every 50 min idle')
+  expect(r.text).toContain('Pings every 50 min idle')
   expect(forked).toBe(false)
 })
