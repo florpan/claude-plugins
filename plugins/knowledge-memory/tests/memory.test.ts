@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { autoMemoryFile, parseEpisode, parseVerdict, projectName, settingsPaths } from '../hooks/register'
+import { autoMemoryFile, episodeUuid, parseEpisode, parseVerdict, projectName, settingsPaths, withKnowledgeId } from '../hooks/register'
 
 const usage = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 const answer = (text: string) => ({ value: { isAnswered: true, text, usage } })
@@ -40,7 +40,9 @@ test('auto-memory paths are recognised, the index is not', () => {
 test('verdicts and episodes parse', () => {
   expect(parseVerdict('SKIP')).toBeNull()
   expect(parseVerdict('LEARNING: route order matters')).toEqual({ kind: 'LEARNING', what: 'route order matters' })
-  expect(parseEpisode('```json\n{"name": "Route order", "body": "Body"}\n```')).toEqual({ name: 'Route order', body: 'Body' })
+  expect(parseEpisode('```json\n{"name": "Route order", "body": "Body"}\n```')).toEqual({ action: 'new', kind: undefined, name: 'Route order', body: 'Body' })
+  expect(parseEpisode('{"action": "correction", "kind": "learning", "name": "N", "body": "B"}')).toEqual({ action: 'correction', kind: 'LEARNING', name: 'N', body: 'B' })
+  expect(parseEpisode('{"action": "skip", "name": "N", "body": "B"}')).toBeNull()
   expect(parseEpisode('{"name": "", "body": ""}')).toBeNull()
 })
 
@@ -96,4 +98,62 @@ test('a memory.json without a group keeps the folder name', async ($, on) => {
   on('mcp.call', () => ({ value: { content: [], isError: false } }))
   const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
   expect(r.text).toContain('saved to project_Dev-RagBase2-backend')
+})
+
+test('a memory file always maps to the same episode id (UUID v5, URL namespace)', async () => {
+  expect(await episodeUuid('knowledge-memory:project_lab/note.md')).toBe('c4e94053-5b7c-576c-a78e-f2022bf31016')
+})
+
+test('the episode id goes into the frontmatter once', () => {
+  const id = 'c4e94053-5b7c-576c-a78e-f2022bf31016'
+  const withMeta = '---\nname: a\nmetadata:\n    type: project\n---\n\nBody'
+  expect(withKnowledgeId(withMeta, id)).toBe(`---\nname: a\nmetadata:\n    knowledge_id: ${id}\n    type: project\n---\n\nBody`)
+  expect(withKnowledgeId(withKnowledgeId(withMeta, id)!, id)).toBeNull()
+  expect(withKnowledgeId('---\nname: a\n---\nBody', id)).toBe(`---\nname: a\nknowledge_id: ${id}\n---\nBody`)
+  expect(withKnowledgeId('---\r\nname: a\r\nknowledge_id: old\r\n---\r\nBody', id)).toBe(`---\r\nname: a\r\nknowledge_id: ${id}\r\n---\r\nBody`)
+  expect(withKnowledgeId('# No frontmatter', id)).toBeNull()
+})
+
+const factsReply = (facts: object[]) => ({ value: { content: [{ type: 'text', text: JSON.stringify({ message: 'ok', facts }) }], isError: false } })
+
+test('the writer sees what the graph already knows and can skip', async ($, on) => {
+  engine(on)
+  let asked = ''
+  let wrote = false
+  on('model.complete', () => answer('LEARNING: auth middleware before webhook route blocks Stripe'))
+  on('model.fork', (_$: any, e: any) => { asked = e.prompt; return answer('{"action": "skip", "name": "", "body": ""}') })
+  on('mcp.call', (_$: any, e: any) => {
+    if (JSON.stringify(e).includes('search_memory_facts')) return factsReply([{ fact: 'Webhook routes go before auth middleware', created_at: '2026-10-01T10:00:00Z', expired_at: null }])
+    wrote = true
+    return { value: { content: [], isError: false } }
+  })
+  const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
+  expect(asked).toContain('- 2026-10-01 Webhook routes go before auth middleware')
+  expect(r.text).toContain('skipped by the writer')
+  expect(wrote).toBe(false)
+})
+
+test('a correction is saved and marked', async ($, on) => {
+  engine(on)
+  const calls: any[] = []
+  on('model.complete', () => answer('PROJECT: webhook route now registered after auth'))
+  on('model.fork', () => answer('{"action": "correction", "name": "Webhook route order changed", "body": "Now after auth, not before as saved earlier."}'))
+  on('mcp.call', (_$: any, e: any) => { calls.push(e); return factsReply([]) })
+  const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
+  expect(r.text).toContain('correction saved to project_')
+  expect(JSON.stringify(calls)).toContain('| correction')
+})
+
+test('save <what> skips the judge and lets the writer pick the group', async ($, on) => {
+  engine(on)
+  let judged = false
+  let asked = ''
+  const calls: any[] = []
+  on('model.complete', () => { judged = true; return answer('SKIP') })
+  on('model.fork', (_$: any, e: any) => { asked = e.prompt; return answer('{"action": "new", "kind": "learning", "name": "Bun stdin blocks without EOF", "body": "Close stdin."}') })
+  on('mcp.call', (_$: any, e: any) => { calls.push(e); return factsReply([]) })
+  const r = await $.command.run({ command: 'knowledge-memory', args: 'save bun stdin needs EOF' })
+  expect(judged).toBe(false)
+  expect(asked).toContain('The user asked to save this to the knowledge graph: bun stdin needs EOF')
+  expect(r.text).toContain('saved to learning: Bun stdin blocks without EOF')
 })

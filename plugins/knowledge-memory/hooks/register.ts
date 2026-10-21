@@ -6,19 +6,24 @@
 //   1. A small model (Haiku by default) reads the last exchange and answers
 //      SKIP, LEARNING: <what> (reusable across projects) or PROJECT: <what>
 //      (specific to this project).
-//   2. Only when it is not SKIP, a tool-less $.model.fork drafts one episode.
+//   2. Only when it is not SKIP, the graph is searched for what the judge
+//      flagged, and a tool-less $.model.fork gets the facts it already holds.
 //      The fork replays the session's own transcript from the prompt cache, so
-//      it has the full context at a fraction of the price.
+//      it has the full context at a fraction of the price. It answers skip
+//      (already known), correction (states what it replaces) or new, and
+//      drafts the episode.
 //   3. The episode goes to the graph's MCP server through $.mcp.call:
 //      `learningGroup` for learnings, `project_<name>` for project facts.
+// "/knowledge-memory save <what>" runs step 2-3 on demand, without the judge.
 //
 // A project can steer it with .claude/memory.json, found by walking up from the
 // session's folder: `group` names the project's group, `save` and `skip` guide
 // the judge. Without one the group comes from the folder name.
 //
 // It also mirrors Claude Code's file-based auto-memory: every Write or Edit of
-// a file under ~/.claude/projects/<project>/memory/ is sent to the graph as
-// soon as it lands, under the same `project_<name>` group.
+// a file under ~/.claude/projects/<project>/memory/ replaces that file's one
+// episode in the graph. The episode id is derived from the group and file name,
+// and written into the file's frontmatter as knowledge_id.
 
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
@@ -32,13 +37,24 @@ The turn may come with this project's own guidance on what to save and skip; fol
 
 Answer with exactly one line: "LEARNING: <what to save, under 20 words>", "PROJECT: <what to save, under 20 words>" or "SKIP".`
 
-const writerPrompt = (kind: string, what: string) => `[knowledge-memory] This message is from the knowledge-memory plugin, not the user. Do not use tools; answer in text only.
+// `ask` says why the writer runs: a classifier's flag, or the user's own /knowledge-memory save
+const writerPrompt = (ask: string, known: string, manual: boolean) => `[knowledge-memory] This message is from the knowledge-memory plugin, not the user. Do not use tools; answer in text only.
 
-A classifier flagged the latest turn for the knowledge graph as a ${kind}: ${what}
+${ask}
 
-Write it as one self-contained episode a future session can use without this conversation: the context, what was found or decided, the fix or the reason, and concrete names (tools, files, commands, versions, hosts). Leave out filler and the story of the conversation.
+The knowledge graph already holds these facts on the subject (found by searching for it; the date is when each was saved, "expired" means a later fact replaced it):
+<known>
+${known || '(nothing found)'}
+</known>
 
-Reply with only a JSON object: {"name": "<title under 80 characters>", "body": "<markdown, 3 to 15 lines>"}. If on reflection nothing is worth keeping, reply {"name": "", "body": ""}.`
+Decide first:
+- "skip" when the graph already says this, in other words or not.
+- "correction" when it contradicts or updates a fact listed above. Write the episode so it states the new fact and what it replaces ("X, not Y as saved earlier").
+- "new" otherwise.
+
+Write the episode self-contained, for a future session without this conversation: the context, what was found or decided, the fix or the reason, and concrete names (tools, files, commands, versions, hosts). Leave out filler and the story of the conversation.
+
+Reply with only a JSON object: {"action": "new" | "correction" | "skip", ${manual ? '"kind": "learning" (reusable beyond this project) | "project" (about this project), ' : ''}"name": "<title under 80 characters>", "body": "<markdown, 3 to 15 lines>"}. With "skip", name and body may be empty.`
 
 type Saved = { at: number; group: string; name: string }
 type Settings = { path: string; group?: string; save?: string; skip?: string; recall?: boolean }
@@ -114,30 +130,57 @@ export const parseVerdict = (text: string) => {
   return m ? { kind: m[1] as 'LEARNING' | 'PROJECT', what: m[2]!.trim() } : null
 }
 
-export const parseEpisode = (text: string) => {
-  const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as { name?: unknown; body?: unknown }
-  const name = typeof json.name === 'string' ? json.name.trim().slice(0, 120) : ''
-  const body = typeof json.body === 'string' ? json.body.trim() : ''
-  return name && body ? { name, body } : null
+type Episode = { action: 'new' | 'correction'; kind?: 'LEARNING' | 'PROJECT'; name: string; body: string }
+
+// null when the writer decided to skip
+export const parseEpisode = (text: string): Episode | null => {
+  const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) as Record<string, unknown>
+  const str = (k: string) => (typeof json[k] === 'string' ? (json[k] as string).trim() : '')
+  const action = str('action') === 'correction' ? 'correction' : str('action') === 'skip' ? 'skip' : 'new'
+  const kind = str('kind') === 'learning' ? 'LEARNING' : str('kind') === 'project' ? 'PROJECT' : undefined
+  const name = str('name').slice(0, 120)
+  const body = str('body')
+  return action !== 'skip' && name && body ? { action, kind, name, body } : null
 }
 
-async function addEpisode($: EngineInterface, args: { name: string; body: string; group: string; source: string }) {
+// The text of an MCP tool result, parsed as the JSON the knowledge server answers with
+const mcpJson = (r: { content?: unknown }): any => {
+  const text = (Array.isArray(r.content) ? r.content : []).map((c: any) => (typeof c?.text === 'string' ? c.text : '')).join('')
+  return text ? JSON.parse(text) : {}
+}
+
+// What the graph already says about a subject, one fact per line, for the writer to check against
+async function knownFacts($: EngineInterface, query: string, groups: string[]): Promise<string> {
+  try {
+    const r = await $.mcp.call(server, 'search_memory_facts', { query, group_ids: groups, max_facts: 8 })
+    if (r.isError) return ''
+    const facts = (mcpJson(r).facts ?? []) as { fact?: string; created_at?: string; expired_at?: string | null }[]
+    return facts
+      .filter(f => f.fact)
+      .map(f => `- ${(f.created_at ?? '').slice(0, 10)} ${f.fact}${f.expired_at ? ' (expired)' : ''}`)
+      .join('\n')
+  } catch {
+    return '' // no check is better than no save
+  }
+}
+
+async function addEpisode($: EngineInterface, args: { name: string; body: string; group: string; source: string; uuid?: string; max?: number }) {
   const r = await $.mcp.call(server, 'add_memory', {
     name: args.name,
-    episode_body: args.body.slice(0, 5000),
+    episode_body: args.body.slice(0, args.max ?? 5000),
     group_id: args.group,
     source: 'text',
     source_description: args.source,
+    ...(args.uuid ? { uuid: args.uuid } : {}),
   })
   if (r.isError) throw new Error(`add_memory on "${server}" failed`)
   saved = [...saved, { at: await $.clock.now(), group: args.group, name: args.name }].slice(-20)
 }
 
-async function considerTurn($: EngineInterface): Promise<string> {
+// The judge: does the last turn hold something worth keeping? Kept apart so another classifier can replace it.
+async function judge($: EngineInterface, settings: Settings | null): Promise<{ kind: 'LEARNING' | 'PROJECT'; what: string } | string> {
   const exchange = lastExchange(await $.session.messages())
-  if (exchange.length < 200) return (lastResult = 'skipped: short turn')
-
-  const settings = await projectSettings($)
+  if (exchange.length < 200) return 'skipped: short turn'
   const already = saved.map(s => `- ${s.name}`).join('\n') || '(none)'
   const guidance = [settings?.save && `Save: ${settings.save}`, settings?.skip && `Skip: ${settings.skip}`].filter(Boolean).join('\n')
   const verdict = await $.model.complete({
@@ -147,36 +190,56 @@ async function considerTurn($: EngineInterface): Promise<string> {
     maxTokens: 60,
     timeoutMs: 20_000,
   })
-  if (!verdict.isAnswered) return (lastResult = `judge failed: ${verdict.reason}`)
-  const flagged = parseVerdict(verdict.text)
-  if (!flagged) return (lastResult = `skipped: judge said "${verdict.text.trim().slice(0, 200)}"`)
+  if (!verdict.isAnswered) return `judge failed: ${verdict.reason}`
+  return parseVerdict(verdict.text) ?? `skipped: judge said "${verdict.text.trim().slice(0, 200)}"`
+}
 
-  const reply = await $.model.fork({ prompt: writerPrompt(flagged.kind.toLowerCase(), flagged.what) })
-  if (!reply.isAnswered) return (lastResult = `writer failed: ${reply.reason}`)
-  let episode: ReturnType<typeof parseEpisode>
+// The writer: a fork with the whole conversation checks the graph's facts and writes one episode
+async function write($: EngineInterface, settings: Settings | null, ask: { kind?: 'LEARNING' | 'PROJECT'; what: string; manual: boolean }): Promise<string> {
+  const group = await projectGroup($, settings)
+  const known = await knownFacts($, ask.what, [learningGroup, group])
+  const why = ask.manual
+    ? `The user asked to save this to the knowledge graph: ${ask.what}`
+    : `A classifier flagged the latest turn for the knowledge graph as a ${ask.kind!.toLowerCase()}: ${ask.what}`
+  const reply = await $.model.fork({ prompt: writerPrompt(why, known, ask.manual) })
+  if (!reply.isAnswered) return `writer failed: ${reply.reason}`
+  let episode: Episode | null
   try {
     episode = parseEpisode(reply.text)
   } catch {
-    return (lastResult = 'writer did not answer with JSON')
+    return 'writer did not answer with JSON'
   }
-  if (!episode) return (lastResult = 'skipped by the writer')
+  if (!episode) return 'skipped by the writer: already known or nothing to keep'
 
+  const kind = ask.kind ?? episode.kind ?? 'PROJECT'
+  const target = kind === 'LEARNING' ? learningGroup : group
   const project = projectName(projectSlug(await $.session.cwd()))
-  const group = flagged.kind === 'LEARNING' ? learningGroup : await projectGroup($, settings)
-  await addEpisode($, { ...episode, group, source: `knowledge-memory | Project: ${project}` })
-  $.ui.status(`🧠 saved to ${group}: ${episode.name}`)
-  return (lastResult = `saved to ${group}: ${episode.name}`)
+  await addEpisode($, { ...episode, group: target, source: `knowledge-memory | Project: ${project}${episode.action === 'correction' ? ' | correction' : ''}` })
+  const what = `${episode.action === 'correction' ? 'correction ' : ''}saved to ${target}: ${episode.name}`
+  $.ui.status(`🧠 ${what}`)
+  return what
+}
+
+async function considerTurn($: EngineInterface): Promise<string> {
+  const settings = await projectSettings($)
+  const flagged = await judge($, settings)
+  return typeof flagged === 'string' ? flagged : write($, settings, { ...flagged, manual: false })
+}
+
+// /knowledge-memory save <hint>: no judge, the writer saves what the user pointed at
+async function saveHint($: EngineInterface, hint: string): Promise<string> {
+  return write($, await projectSettings($), { what: hint, manual: true })
 }
 
 // One run at a time; a turn that ends during a run is considered once it finishes
-async function consider($: EngineInterface): Promise<void> {
+async function consider($: EngineInterface, hint?: string): Promise<void> {
   if (isBusy) {
     isPending = true
     return
   }
   isBusy = true
   try {
-    lastResult = await considerTurn($)
+    lastResult = hint ? await saveHint($, hint) : await considerTurn($)
   } catch (err) {
     lastResult = `failed: ${err instanceof Error ? err.message : String(err)}`
   } finally {
@@ -188,20 +251,61 @@ async function consider($: EngineInterface): Promise<void> {
   }
 }
 
+// UUID v5 (URL namespace) of a key: the same memory file always maps to the same episode
+export async function episodeUuid(key: string): Promise<string> {
+  const ns = '6ba7b8119dad11d180b400c04fd430c8'.match(/../g)!.map(h => parseInt(h, 16))
+  const data = new Uint8Array([...ns, ...new TextEncoder().encode(key)])
+  const b = new Uint8Array(await crypto.subtle.digest('SHA-1', data)).slice(0, 16)
+  b[6] = (b[6]! & 0x0f) | 0x50
+  b[8] = (b[8]! & 0x3f) | 0x80
+  const hex = [...b].map(x => x.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+// The file with `knowledge_id: <id>` in its frontmatter (under metadata: when there is one), or null when it
+// already has it or has no frontmatter
+export const withKnowledgeId = (text: string, id: string): string | null => {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(eol)
+  const end = lines.indexOf('---', 1)
+  if (lines[0] !== '---' || end < 0) return null
+  const at = (re: RegExp) => lines.findIndex((l, i) => i > 0 && i < end && re.test(l))
+  const existing = at(/^\s*knowledge_id:/)
+  if (existing >= 0) {
+    const line = lines[existing]!.replace(/knowledge_id:.*$/, `knowledge_id: ${id}`)
+    if (line === lines[existing]) return null
+    lines[existing] = line
+    return lines.join(eol)
+  }
+  const meta = at(/^metadata:\s*$/)
+  if (meta < 0) lines.splice(end, 0, `knowledge_id: ${id}`)
+  else lines.splice(meta + 1, 0, `${/^(\s+)\S/.exec(lines[meta + 1] ?? '')?.[1] ?? '  '}knowledge_id: ${id}`)
+  return lines.join(eol)
+}
+
+// One episode per memory file, replaced on every write; the file carries the episode's id
 async function mirror($: EngineInterface, path: string): Promise<void> {
   const hit = autoMemoryFile(path)
   if (!hit) return
-  const body = await $.fs.read(path)
   // The memory folder of this session's own project follows its settings; another project's keeps its folder name
   const own = hit.dir === projectSlug(await $.session.cwd())
   const group = own ? await projectGroup($, await projectSettings($)) : `project_${hit.project}`
+  const id = await episodeUuid(`knowledge-memory:${group}/${hit.file}`)
+  let body = await $.fs.read(path)
+  const tagged = withKnowledgeId(body, id)
+  if (tagged !== null) {
+    await $.fs.write(path, tagged)
+    body = tagged
+  }
   await addEpisode($, {
     name: `project-memory: ${hit.project}/${hit.file}`,
     body,
     group,
     source: `Project: ${hit.project} | File: ${hit.file}`,
+    uuid: id,
+    max: 50_000,
   })
-  lastResult = `mirrored ${hit.project}/${hit.file}`
+  lastResult = `mirrored ${hit.project}/${hit.file} as ${id}`
 }
 
 export const register: Register = (on, options) => {
@@ -213,8 +317,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'knowledge-memory',
-      description: 'Show what knowledge-memory saved this session; "/knowledge-memory now" considers the last turn now',
-      argumentHint: '[now]',
+      description: 'Show what knowledge-memory saved this session; "now" considers the last turn now; "save <what>" saves it',
+      argumentHint: '[now | save <what>]',
     })
     return next(e)
   })
@@ -234,11 +338,14 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e)) // never stand between Claude and a write
 
   on('command.run', { command: 'knowledge-memory' }, async ($, e) => {
-    if ((e.args ?? '').trim() === 'now') {
+    const args = (e.args ?? '').trim()
+    const hint = /^save\s+([\s\S]+)$/.exec(args)?.[1]?.trim()
+    if (args === 'now' || hint) {
       if (isBusy) return { text: 'A run is already considering the last turn; /knowledge-memory shows its result.' }
-      await consider($)
+      await consider($, hint)
       return { text: lastResult }
     }
+    if (args === 'save') return { text: 'Say what to save: /knowledge-memory save <what>' }
     const lines = saved.map(s => `- [${s.group}] ${s.name}`)
     const settings = await projectSettings($)
     return {

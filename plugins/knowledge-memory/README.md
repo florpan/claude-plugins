@@ -16,16 +16,24 @@ After each answered turn of the main thread, in the background:
    exchange and the episodes already saved this session, and answers `SKIP`,
    `LEARNING: <what>` (reusable across projects) or `PROJECT: <what>`
    (specific to this project). Most turns are `SKIP`.
-2. **A fork writes the episode.** Only when it is not `SKIP`: a tool-less
-   `$.model.fork` replays the session's own transcript from the prompt cache,
-   so it writes with the full context at a fraction of the price, and replies
-   with a title and a short self-contained markdown body.
-3. **The episode goes to the graph** through the server's `add_memory` tool:
+2. **The graph is checked.** The plugin searches the graph
+   (`search_memory_facts`) for what the judge flagged.
+3. **A fork writes the episode.** A tool-less `$.model.fork` replays the
+   session's own transcript from the prompt cache, so it writes with the full
+   context at a fraction of the price. It gets the facts the graph already
+   holds and answers `skip` (already known), `correction` (the episode states
+   what it replaces) or `new`, with a title and a short self-contained
+   markdown body.
+4. **The episode goes to the graph** through the server's `add_memory` tool:
    learnings to `learningGroup`, project facts to `project_<name>`.
 
 Claude Code's own file-based auto-memory is mirrored too: each Write or Edit
-of a file under `~/.claude/projects/<project>/memory/` is sent to the graph as
-`project-memory: <project>/<file>` in `project_<name>`, as soon as it lands.
+of a file under `~/.claude/projects/<project>/memory/` replaces that file's
+episode (`project-memory: <project>/<file>`) in the project's group. The
+episode id is a UUID v5 of the group and file name, so one file is always one
+episode, and it is written into the file's frontmatter as `knowledge_id`. This
+needs a server whose `add_memory` treats a given `uuid` as "create or replace";
+plain Graphiti only accepts the uuid of an existing episode.
 
 The status line shows the last save. Nothing is added to the conversation.
 
@@ -67,6 +75,8 @@ through your permission rules. Allow the tool once, or every save will ask:
 
 - `/knowledge-memory`: what was saved this session and the last result
 - `/knowledge-memory now`: judge the last turn now
+- `/knowledge-memory save <what>`: save something now, without the judge; the
+  writer checks the graph the same way and picks learning or project itself
 
 ## Options
 
