@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { autoMemoryFile, parseEpisode, parseVerdict, projectName } from '../hooks/register'
+import { autoMemoryFile, parseEpisode, parseVerdict, projectName, settingsPaths } from '../hooks/register'
 
 const usage = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 const answer = (text: string) => ({ value: { isAnswered: true, text, usage } })
@@ -10,11 +10,14 @@ const turn = [
 ]
 
 // Engine calls the mod makes besides the model and the MCP server
-const engine = (on: any) => {
+// With settings, the session runs in RagBase2\backend and RagBase2\.claude\memory.json holds them
+const engine = (on: any, settings?: object) => {
   on('clock.now', () => ({ value: 1_000_000 }))
   on('ui.status', () => ({ value: undefined }))
-  on('session.cwd', () => ({ value: 'C:\\Dev\\RagBase2' }))
+  on('session.cwd', () => ({ value: settings ? 'C:\\Dev\\RagBase2\\backend' : 'C:\\Dev\\RagBase2' }))
   on('session.messages', () => ({ value: turn }))
+  on('fs.exists', (_$: any, e: any) => ({ value: !!settings && e.path.endsWith('RagBase2\\.claude\\memory.json') }))
+  if (settings) on('fs.read', () => ({ value: JSON.stringify(settings) }))
 }
 
 test('project names follow the old sync hook', () => {
@@ -23,8 +26,13 @@ test('project names follow the old sync hook', () => {
   expect(projectName('C--Users-chris')).toBe('Users-chris')
 })
 
+test('settings are looked for from the folder up', () => {
+  expect(settingsPaths('C:\\Dev\\lab')).toEqual(['C:\\Dev\\lab\\.claude\\memory.json', 'C:\\Dev\\.claude\\memory.json', 'C:\\.claude\\memory.json'])
+  expect(settingsPaths('/home/x/')).toEqual(['/home/x/.claude/memory.json', '/home/.claude/memory.json', '/.claude/memory.json'])
+})
+
 test('auto-memory paths are recognised, the index is not', () => {
-  expect(autoMemoryFile('C:\\Users\\x\\.claude\\projects\\C--dev-lab\\memory\\note.md')).toEqual({ project: 'lab', file: 'note.md' })
+  expect(autoMemoryFile('C:\\Users\\x\\.claude\\projects\\C--dev-lab\\memory\\note.md')).toEqual({ dir: 'C--dev-lab', project: 'lab', file: 'note.md' })
   expect(autoMemoryFile('/home/x/.claude/projects/-home-x-app/memory/MEMORY.md')).toBeNull()
   expect(autoMemoryFile('C:\\Dev\\app\\README.md')).toBeNull()
 })
@@ -65,4 +73,27 @@ test('SKIP never forks or writes', async ($, on) => {
   const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
   expect(r.text).toContain('skipped')
   expect(touched).toBe(false)
+})
+
+test('memory.json names the group and guides the judge', async ($, on) => {
+  engine(on, { group: 'project_rag', save: 'chunking decisions', skip: 'UI tweaks' })
+  let judged = ''
+  on('model.complete', (_$: any, e: any) => { judged = e.prompt; return answer('PROJECT: webhook route registered first') })
+  on('model.fork', () => answer('{"name": "Webhook route order", "body": "The webhook route is registered first."}'))
+  on('mcp.call', () => ({ value: { content: [], isError: false } }))
+  const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
+  expect(r.text).toContain('saved to project_rag')
+  expect(judged).toContain('Save: chunking decisions')
+  expect(judged).toContain('Skip: UI tweaks')
+  const status = await $.command.run({ command: 'knowledge-memory' })
+  expect(status.text).toContain('RagBase2\\.claude\\memory.json')
+})
+
+test('a memory.json without a group keeps the folder name', async ($, on) => {
+  engine(on, { save: 'anything' })
+  on('model.complete', () => answer('PROJECT: something lasting'))
+  on('model.fork', () => answer('{"name": "Fact", "body": "Body"}'))
+  on('mcp.call', () => ({ value: { content: [], isError: false } }))
+  const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
+  expect(r.text).toContain('saved to project_Dev-RagBase2-backend')
 })

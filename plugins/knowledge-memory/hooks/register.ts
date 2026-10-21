@@ -12,6 +12,10 @@
 //   3. The episode goes to the graph's MCP server through $.mcp.call:
 //      `learningGroup` for learnings, `project_<name>` for project facts.
 //
+// A project can steer it with .claude/memory.json, found by walking up from the
+// session's folder: `group` names the project's group, `save` and `skip` guide
+// the judge. Without one the group comes from the folder name.
+//
 // It also mirrors Claude Code's file-based auto-memory: every Write or Edit of
 // a file under ~/.claude/projects/<project>/memory/ is sent to the graph as
 // soon as it lands, under the same `project_<name>` group.
@@ -24,6 +28,8 @@ Answer LEARNING when the turn established something reusable beyond this project
 Answer PROJECT when it established a lasting fact about this project: its setup, a constraint, a decision, where something lives, how it is deployed.
 Answer SKIP for routine work, questions, plans not yet carried out, chit-chat, anything only this conversation needs, and anything listed under "already saved".
 
+The turn may come with this project's own guidance on what to save and skip; follow it.
+
 Answer with exactly one line: "LEARNING: <what to save, under 20 words>", "PROJECT: <what to save, under 20 words>" or "SKIP".`
 
 const writerPrompt = (kind: string, what: string) => `[knowledge-memory] This message is from the knowledge-memory plugin, not the user. Do not use tools; answer in text only.
@@ -35,6 +41,7 @@ Write it as one self-contained episode a future session can use without this con
 Reply with only a JSON object: {"name": "<title under 80 characters>", "body": "<markdown, 3 to 15 lines>"}. If on reflection nothing is worth keeping, reply {"name": "", "body": ""}.`
 
 type Saved = { at: number; group: string; name: string }
+type Settings = { path: string; group?: string; save?: string; skip?: string; recall?: boolean }
 
 let server = 'knowledge'
 let learningGroup = 'learning'
@@ -52,12 +59,41 @@ export const projectName = (dirName: string): string =>
 
 const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 
+// Where .claude/memory.json may be, nearest first: "C:\Dev\lab" -> C:\Dev\lab\.claude\memory.json, C:\Dev\..., C:\...
+export const settingsPaths = (dir: string): string[] => {
+  const sep = dir.includes('\\') ? '\\' : '/'
+  const parts = dir.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts.map((_, i) => [...parts.slice(0, parts.length - i), '.claude', 'memory.json'].join(sep))
+}
+
+export const parseSettings = (path: string, text: string): Settings => {
+  const json = JSON.parse(text) as Record<string, unknown>
+  const str = (k: string) => (typeof json[k] === 'string' && json[k] ? (json[k] as string) : undefined)
+  return { path, group: str('group'), save: str('save'), skip: str('skip'), recall: json.recall !== false }
+}
+
+// The nearest .claude/memory.json at or above the session's folder
+async function projectSettings($: EngineInterface): Promise<Settings | null> {
+  for (const path of settingsPaths(await $.session.cwd())) {
+    if (!(await $.fs.exists(path))) continue
+    try {
+      return parseSettings(path, await $.fs.read(path))
+    } catch {
+      return null // a broken file falls back to the folder name rather than guessing
+    }
+  }
+  return null
+}
+
+const projectGroup = async ($: EngineInterface, settings: Settings | null) =>
+  settings?.group ?? `project_${projectName(projectSlug(await $.session.cwd()))}`
+
 // ~/.claude/projects/<dir>/memory/<file>.md, either slash
 const AUTO_MEMORY = /[\\/]\.claude[\\/]projects[\\/]([^\\/]+)[\\/]memory[\\/]([^\\/]+\.md)$/i
 
 export const autoMemoryFile = (path: string) => {
   const m = AUTO_MEMORY.exec(path)
-  return m && m[2] !== 'MEMORY.md' ? { project: projectName(m[1]!), file: m[2]! } : null
+  return m && m[2] !== 'MEMORY.md' ? { dir: m[1]!, project: projectName(m[1]!), file: m[2]! } : null
 }
 
 // A slash command's own rows (its record and output) are no exchange to judge
@@ -101,11 +137,13 @@ async function considerTurn($: EngineInterface): Promise<string> {
   const exchange = lastExchange(await $.session.messages())
   if (exchange.length < 200) return (lastResult = 'skipped: short turn')
 
+  const settings = await projectSettings($)
   const already = saved.map(s => `- ${s.name}`).join('\n') || '(none)'
+  const guidance = [settings?.save && `Save: ${settings.save}`, settings?.skip && `Skip: ${settings.skip}`].filter(Boolean).join('\n')
   const verdict = await $.model.complete({
     model: judgeModel,
     system: JUDGE,
-    prompt: `<already_saved>\n${already}\n</already_saved>\n\n<turn>\n${exchange}\n</turn>`,
+    prompt: `${guidance ? `<project_guidance>\n${guidance}\n</project_guidance>\n\n` : ''}<already_saved>\n${already}\n</already_saved>\n\n<turn>\n${exchange}\n</turn>`,
     maxTokens: 60,
     timeoutMs: 20_000,
   })
@@ -124,7 +162,7 @@ async function considerTurn($: EngineInterface): Promise<string> {
   if (!episode) return (lastResult = 'skipped by the writer')
 
   const project = projectName(projectSlug(await $.session.cwd()))
-  const group = flagged.kind === 'LEARNING' ? learningGroup : `project_${project}`
+  const group = flagged.kind === 'LEARNING' ? learningGroup : await projectGroup($, settings)
   await addEpisode($, { ...episode, group, source: `knowledge-memory | Project: ${project}` })
   $.ui.status(`🧠 saved to ${group}: ${episode.name}`)
   return (lastResult = `saved to ${group}: ${episode.name}`)
@@ -154,10 +192,13 @@ async function mirror($: EngineInterface, path: string): Promise<void> {
   const hit = autoMemoryFile(path)
   if (!hit) return
   const body = await $.fs.read(path)
+  // The memory folder of this session's own project follows its settings; another project's keeps its folder name
+  const own = hit.dir === projectSlug(await $.session.cwd())
+  const group = own ? await projectGroup($, await projectSettings($)) : `project_${hit.project}`
   await addEpisode($, {
     name: `project-memory: ${hit.project}/${hit.file}`,
     body,
-    group: `project_${hit.project}`,
+    group,
     source: `Project: ${hit.project} | File: ${hit.file}`,
   })
   lastResult = `mirrored ${hit.project}/${hit.file}`
@@ -199,9 +240,13 @@ export const register: Register = (on, options) => {
       return { text: lastResult }
     }
     const lines = saved.map(s => `- [${s.group}] ${s.name}`)
+    const settings = await projectSettings($)
     return {
       text: [
         `Judge ${judgeModel}, server "${server}", learnings to "${learningGroup}".`,
+        settings
+          ? `Project settings: ${settings.path}, project facts to "${await projectGroup($, settings)}".`
+          : `No .claude/memory.json here; project facts to "${await projectGroup($, null)}".`,
         lines.length ? `Saved this session:\n${lines.join('\n')}` : 'Nothing saved this session yet.',
         `Last: ${lastResult}`,
       ].join('\n'),

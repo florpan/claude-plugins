@@ -29,6 +29,29 @@ of a file under `~/.claude/projects/<project>/memory/` is sent to the graph as
 
 The status line shows the last save. Nothing is added to the conversation.
 
+## Per-project settings
+
+A project can put a `.claude/memory.json` in its root. The plugin uses the
+nearest one at or above the session's folder, so a session started in a
+subfolder still lands in the project's group.
+
+```json
+{
+  "group": "project_myapp",
+  "save": "Architecture decisions, deploy setup, where things live.",
+  "skip": "UI tweaks. Credentials.",
+  "recall": true
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `group` | `group_id` for this project's facts and its auto-memory files. Without it: `project_<folder name>` |
+| `save`, `skip` | Plain-text guidance the judge gets with every turn |
+| `recall` | Reserved for recall; not used yet |
+
+`/knowledge-memory` shows which file is in use.
+
 ## Permission
 
 The episode is written with the session's own MCP connection, so it goes
