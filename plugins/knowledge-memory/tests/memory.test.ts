@@ -127,16 +127,21 @@ const factsReply = (facts: object[]) => ({ value: { content: [{ type: 'text', te
 test('the writer sees what the graph already knows and can skip', async ($, on) => {
   engine(on)
   let asked = ''
+  let searched = ''
   let wrote = false
   on('model.complete', () => answer('LEARNING: auth middleware before webhook route blocks Stripe'))
   on('model.fork', (_$: any, e: any) => { asked = e.prompt; return answer('{"action": "skip", "name": "", "body": ""}') })
   on('mcp.call', (_$: any, e: any) => {
-    if (JSON.stringify(e).includes('search_memory_facts')) return factsReply([{ fact: 'Webhook routes go before auth middleware', created_at: '2026-10-01T10:00:00Z', expired_at: null }])
+    if (JSON.stringify(e).includes('search_memory_facts')) {
+      searched = JSON.stringify(e)
+      return factsReply([{ fact: 'Webhook routes go before auth middleware', created_at: '2026-10-01T10:00:00Z', expired_at: null }])
+    }
     wrote = true
     return { value: { content: [], isError: false } }
   })
   const r = await $.command.run({ command: 'knowledge-memory', args: 'now' })
   expect(asked).toContain('- 2026-10-01 Webhook routes go before auth middleware')
+  expect(searched).toContain('"track_access":false') // the check doesn't count as using the memory
   expect(r.text).toContain('skipped by the writer')
   expect(wrote).toBe(false)
 })

@@ -16,7 +16,7 @@
       "name": "knowledge-memory",
       "source": "./plugins/knowledge-memory",
       "description": "Saves what each turn teaches straight into a Graphiti knowledge graph: a Haiku check after every turn, a cached fork writes the episode",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "license": "MIT"
     }
   ]

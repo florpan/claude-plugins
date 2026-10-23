@@ -163,7 +163,11 @@ const mcpJson = (r: { content?: unknown }): any => {
 // What the graph already says about a subject, one fact per line, for the writer to check against
 async function knownFacts($: EngineInterface, query: string, groups: string[]): Promise<string> {
   try {
-    const r = await $.mcp.call(server, 'search_memory_facts', { query, group_ids: groups, max_facts: 8 })
+    // An automated check is no use of a memory: don't let it count against decay. A server without access
+    // tracking may reject the argument, so ask again without it.
+    const args = { query, group_ids: groups, max_facts: 8 }
+    let r = await $.mcp.call(server, 'search_memory_facts', { ...args, track_access: false })
+    if (r.isError) r = await $.mcp.call(server, 'search_memory_facts', args)
     if (r.isError) return ''
     const facts = (mcpJson(r).facts ?? []) as { fact?: string; created_at?: string; expired_at?: string | null }[]
     return facts
