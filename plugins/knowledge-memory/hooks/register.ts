@@ -78,9 +78,20 @@ const projectSlug = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
 // Where .claude/memory.json may be, nearest first: "C:\Dev\lab" -> C:\Dev\lab\.claude\memory.json, C:\Dev\..., C:\...
 export const settingsPaths = (dir: string): string[] => {
   const sep = dir.includes('\\') ? '\\' : '/'
-  const parts = dir.replace(/[\\/]+$/, '').split(/[\\/]/)
-  return parts.map((_, i) => [...parts.slice(0, parts.length - i), '.claude', 'memory.json'].join(sep))
+  return ancestors(dir).map(d => [d, '.claude', 'memory.json'].join(sep))
 }
+
+// A folder and the folders above it, nearest first: "C:\Dev\lab" -> C:\Dev\lab, C:\Dev, C:
+function ancestors(dir: string): string[] {
+  const sep = dir.includes('\\') ? '\\' : '/'
+  const parts = dir.replace(/[\\/]+$/, '').split(/[\\/]/)
+  return parts.map((_, i) => parts.slice(0, parts.length - i).join(sep))
+}
+
+// The folder at or above cwd that a ~/.claude/projects/<slug> folder belongs to. Going from the slug back to a
+// folder is ambiguous ("Dev-lab" may be Dev\lab or Dev-lab), so match against the session's own folders instead.
+export const projectRoot = (cwd: string, slug: string): string | null =>
+  ancestors(cwd).find(d => projectSlug(d) === slug) ?? null
 
 export const parseSettings = (path: string, text: string): Settings => {
   const json = JSON.parse(text) as Record<string, unknown>
@@ -88,9 +99,9 @@ export const parseSettings = (path: string, text: string): Settings => {
   return { path, group: str('group'), save: str('save'), skip: str('skip'), recall: json.recall !== false }
 }
 
-// The nearest .claude/memory.json at or above the session's folder
-async function projectSettings($: EngineInterface): Promise<Settings | null> {
-  for (const path of settingsPaths(await $.session.cwd())) {
+// The nearest .claude/memory.json at or above the session's folder (or the given one)
+async function projectSettings($: EngineInterface, dir?: string): Promise<Settings | null> {
+  for (const path of settingsPaths(dir ?? (await $.session.cwd()))) {
     if (!(await $.fs.exists(path))) continue
     try {
       return parseSettings(path, await $.fs.read(path))
@@ -101,8 +112,8 @@ async function projectSettings($: EngineInterface): Promise<Settings | null> {
   return null
 }
 
-const projectGroup = async ($: EngineInterface, settings: Settings | null) =>
-  settings?.group ?? `project_${projectName(projectSlug(await $.session.cwd()))}`
+const projectGroup = async ($: EngineInterface, settings: Settings | null, dir?: string) =>
+  settings?.group ?? `project_${projectName(projectSlug(dir ?? (await $.session.cwd())))}`
 
 // ~/.claude/projects/<dir>/memory/<file>.md, either slash
 const AUTO_MEMORY = /[\\/]\.claude[\\/]projects[\\/]([^\\/]+)[\\/]memory[\\/]([^\\/]+\.md)$/i
@@ -287,9 +298,10 @@ export const withKnowledgeId = (text: string, id: string): string | null => {
 async function mirror($: EngineInterface, path: string): Promise<void> {
   const hit = autoMemoryFile(path)
   if (!hit) return
-  // The memory folder of this session's own project follows its settings; another project's keeps its folder name
-  const own = hit.dir === projectSlug(await $.session.cwd())
-  const group = own ? await projectGroup($, await projectSettings($)) : `project_${hit.project}`
+  // The memory folder of a project at or above the session's folder follows that project's settings, wherever the
+  // session has cd'd to since; another project's keeps its folder name
+  const root = projectRoot(await $.session.cwd(), hit.dir)
+  const group = root ? await projectGroup($, await projectSettings($, root), root) : `project_${hit.project}`
   const id = await episodeUuid(`knowledge-memory:${group}/${hit.file}`)
   let body = await $.fs.read(path)
   const tagged = withKnowledgeId(body, id)

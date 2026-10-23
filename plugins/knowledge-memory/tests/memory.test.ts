@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { autoMemoryFile, episodeUuid, parseEpisode, parseVerdict, projectName, settingsPaths, withKnowledgeId } from '../hooks/register'
+import { autoMemoryFile, episodeUuid, parseEpisode, parseVerdict, projectName, projectRoot, settingsPaths, withKnowledgeId } from '../hooks/register'
 
 const usage = { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 const answer = (text: string) => ({ value: { isAnswered: true, text, usage } })
@@ -29,6 +29,14 @@ test('project names follow the old sync hook', () => {
 test('settings are looked for from the folder up', () => {
   expect(settingsPaths('C:\\Dev\\lab')).toEqual(['C:\\Dev\\lab\\.claude\\memory.json', 'C:\\Dev\\.claude\\memory.json', 'C:\\.claude\\memory.json'])
   expect(settingsPaths('/home/x/')).toEqual(['/home/x/.claude/memory.json', '/home/.claude/memory.json', '/.claude/memory.json'])
+})
+
+test('a memory folder maps to its project root even after a cd into a subfolder', () => {
+  expect(projectRoot('C:\\Dev\\lab', 'C--Dev-lab')).toBe('C:\\Dev\\lab')
+  expect(projectRoot('C:\\Dev\\lab\\memory-explorer', 'C--Dev-lab')).toBe('C:\\Dev\\lab')
+  expect(projectRoot('C:\\Dev\\lab\\knowledge-mcp\\src', 'C--Dev-lab')).toBe('C:\\Dev\\lab')
+  expect(projectRoot('/home/x/app/web', '-home-x-app')).toBe('/home/x/app')
+  expect(projectRoot('C:\\Dev\\lab', 'C--Dev-RagBase2')).toBeNull() // another project's memory
 })
 
 test('auto-memory paths are recognised, the index is not', () => {

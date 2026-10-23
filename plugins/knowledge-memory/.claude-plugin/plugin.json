@@ -1,6 +1,6 @@
 {
   "name": "knowledge-memory",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Saves what each turn teaches straight into a Graphiti knowledge graph: a Haiku check after every turn, a cached fork writes the episode",
   "author": { "name": "Christer Åkerlund" },
   "license": "MIT",
