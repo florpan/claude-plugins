@@ -1,0 +1,42 @@
+{
+  "name": "agent-review",
+  "version": "0.1.0",
+  "description": "Runs Mark Russinovich's Agent Review (a GitHub Copilot canvas) unmodified in Claude Code: review agent-made changes from architecture down to source diffs",
+  "author": { "name": "Christer Åkerlund" },
+  "license": "MIT",
+  "network": {
+    "hosts": ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"]
+  },
+  "mcpServers": {
+    "agent-review": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/main.mjs"],
+      "env": {
+        "AGENT_REVIEW_HOME": "${CLAUDE_PLUGIN_DATA}",
+        "AGENT_REVIEW_MODEL": "${user_config.model}",
+        "AGENT_REVIEW_REVIEW_MODEL": "${user_config.reviewModel}",
+        "AGENT_REVIEW_EFFORT": "${user_config.effort}"
+      }
+    }
+  },
+  "userConfig": {
+    "model": {
+      "type": "string",
+      "title": "Model for explanations",
+      "description": "Writes the overview, summaries, file explanations and discussion answers. A model name such as sonnet, or session for the model of the session that opened the review",
+      "default": "sonnet"
+    },
+    "reviewModel": {
+      "type": "string",
+      "title": "Model for review passes",
+      "description": "Looks for defects in the change and verifies the candidates. A model name such as opus, or session. Upstream cancels a pass that takes over two minutes",
+      "default": "opus"
+    },
+    "effort": {
+      "type": "string",
+      "title": "Effort for explanations",
+      "description": "low, medium, high, xhigh or max. Upstream allows each request two minutes",
+      "default": "low"
+    }
+  }
+}

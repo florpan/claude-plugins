@@ -6,6 +6,13 @@
   },
   "plugins": [
     {
+      "name": "agent-review",
+      "source": "./plugins/agent-review",
+      "description": "Runs Mark Russinovich's Agent Review (a GitHub Copilot canvas) unmodified in Claude Code: review agent-made changes from architecture down to source diffs",
+      "version": "0.1.0",
+      "license": "MIT"
+    },
+    {
       "name": "cache-warmer",
       "source": "./plugins/cache-warmer",
       "description": "Keeps the prompt cache warm while the session is idle, with a tiny forked ping that adds nothing to the transcript",
