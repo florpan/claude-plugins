@@ -15,7 +15,7 @@ assistant and a phone all work on one set of lists.
 
 ```
 <TODO_ROOT>/
-  users.md                 who is who (names, chat ids, mail addresses) for multi-user assistants
+  users.md                 optional: who is who (names, chat ids, mail) if the assistant has no list of its own
   shared/groceries.md      lists for everyone
   shared/index.md          Obsidian page: every open shared task
   <user>/inbox.md          a person's lists; any name, subfolders allowed (projects/<repo>.md)

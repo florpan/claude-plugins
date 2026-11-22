@@ -36,9 +36,10 @@ Every command runs as a user: `--user <name>` or `TODO_USER`. A user is a folder
 
 - In a personal session `TODO_USER` is set; just run the commands.
 - In a session that serves several people (a house assistant), work out who is talking from the channel
-  (Discord user, email sender, voice) using `users.md` in the root, and pass `--user` on **every** command.
-  If you can't tell who it is, ask, or use a `shared/` list when the item is clearly for the household.
-- A new person: `init <name>` makes their folder and an Obsidian index page; add them to `users.md`.
+  (Discord user, email sender, voice) using the session's own list of people (its CLAUDE.md says where;
+  otherwise `users.md` in the root), and pass `--user` on **every** command. The user is the person's name in
+  lowercase. If you can't tell who it is, ask, or use a `shared/` list when the item is clearly for the household.
+- A new person: `init <name>` makes their folder and an Obsidian index page.
 
 ## Which list
 
