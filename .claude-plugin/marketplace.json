@@ -18,6 +18,13 @@
       "description": "Saves what each turn teaches straight into a Graphiti knowledge graph: a Haiku check after every turn, a cached fork writes the episode",
       "version": "0.3.2",
       "license": "MIT"
+    },
+    {
+      "name": "todo",
+      "source": "./plugins/todo",
+      "description": "Todo lists as plain markdown files in a synced folder: Obsidian Tasks format, per-user and shared lists, one CLI for every agent",
+      "version": "0.1.0",
+      "license": "MIT"
     }
   ]
 }
