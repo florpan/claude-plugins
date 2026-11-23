@@ -1,6 +1,6 @@
 {
   "name": "todo",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Todo lists as plain markdown files in a synced folder: one list per file, Obsidian Tasks format, per-user folders plus shared lists, one small CLI for every agent",
   "author": { "name": "Christer Åkerlund" },
   "license": "MIT"

@@ -46,11 +46,16 @@ Every command runs as a user: `--user <name>` or `TODO_USER`. A user is a folder
 `<list>` without a slash means: the user's own list with that name, else the shared list with that name,
 else a new list of the user's. With a slash it is exactly that file (`shared/house`, `alex/school`).
 
-- Food and household shopping: `groceries` (shared).
-- Something for the house: `house` (shared), unless it is clearly one person's job.
+**Run `lists` first** and pick by meaning, not by the English word: lists are named in whatever language the
+household uses (`shared/matvaror` is the grocery list). Pass the existing name, with its folder for shared
+lists (`add shared/matvaror Mjölk`), so a translated word never creates a second list by accident.
+
+- Food and household shopping: the shared shopping list.
+- Something for the house: the shared house list, unless it is clearly one person's job.
 - In a code project (the cwd is a repo) and the item is about that project: `projects/<repo folder name>`.
-- Work: the user's `work` list.
-- Unclear: `inbox`. Don't invent a new list for one item; check `lists` first and use what exists.
+- Work: the user's work list (`area: work`).
+- Unclear: `inbox`. Don't invent a new list for one item. Only create a list when none fits and the user
+  wants it, or the item clearly starts a new topic.
 
 New lists are created on the first `add`. To mark a list as work, give its file frontmatter `area: work`
 (the CLI writes `owner:` only).

@@ -23,7 +23,7 @@
       "name": "todo",
       "source": "./plugins/todo",
       "description": "Todo lists as plain markdown files in a synced folder: Obsidian Tasks format, per-user and shared lists, one CLI for every agent",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "license": "MIT"
     }
   ]
